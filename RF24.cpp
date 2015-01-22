@@ -598,16 +598,17 @@ void RF24::printDetails(void)
   print_byte_register(PSTR("RF_SETUP"),RF_SETUP);
   print_byte_register(PSTR("CONFIG"),CONFIG);
   print_byte_register(PSTR("DYNPD/FEATURE"),DYNPD,2);
-#if defined(__arm__) || defined (RF24_LINUX) || defined (__ARDUINO_X86__)
+
+#if defined(__arm__) || defined (RF24_LINUX) || defined (__ARDUINO_X86__) || defined(LITTLEWIRE)
   printf_P(PSTR("Data Rate\t = %s\r\n"),pgm_read_word(&rf24_datarate_e_str_P[getDataRate()]));
   printf_P(PSTR("Model\t\t = %s\r\n"),pgm_read_word(&rf24_model_e_str_P[isPVariant()]));
   printf_P(PSTR("CRC Length\t = %s\r\n"),pgm_read_word(&rf24_crclength_e_str_P[getCRCLength()]));
-  printf_P(PSTR("PA Power\t = %s\r\n"),pgm_read_word(&rf24_pa_dbm_e_str_P[getPALevel()]));
+  printf_P(PSTR("PA Power\t = %s\r\n"),  pgm_read_word(&rf24_pa_dbm_e_str_P[getPALevel()]));
 #else
-  printf_P(PSTR("Data Rate\t = %S\r\n"),pgm_read_word(&rf24_datarate_e_str_P[getDataRate()]));
-  printf_P(PSTR("Model\t\t = %S\r\n"),pgm_read_word(&rf24_model_e_str_P[isPVariant()]));
+  printf_P(PSTR("Data Rate\t = %S\r\n"), pgm_read_word(&rf24_datarate_e_str_P[getDataRate()]));
+  printf_P(PSTR("Model\t\t = %S\r\n"),   pgm_read_word(&rf24_model_e_str_P[isPVariant()]));
   printf_P(PSTR("CRC Length\t = %S\r\n"),pgm_read_word(&rf24_crclength_e_str_P[getCRCLength()]));
-  printf_P(PSTR("PA Power\t = %S\r\n"),pgm_read_word(&rf24_pa_dbm_e_str_P[getPALevel()]));
+  printf_P(PSTR("PA Power\t = %S\r\n"),  pgm_read_word(&rf24_pa_dbm_e_str_P[getPALevel()]));
 #endif
 
 }
@@ -637,6 +638,10 @@ void RF24::begin(void)
  	ce(LOW);
 	delay(100);
   
+  #elif defined(LITTLEWIRE)
+    pinMode(csn_pin,OUTPUT);
+    _SPI.begin();
+    csn(HIGH);
   #else
     // Initialize pins
   if (ce_pin != csn_pin) pinMode(ce_pin,OUTPUT);  
@@ -649,7 +654,11 @@ void RF24::begin(void)
 	ce(LOW);
   	//csn(HIGH);
   #else
-    if (ce_pin != csn_pin) pinMode(csn_pin,OUTPUT);
+    #if ! defined(LITTLEWIRE)
+    if (ce_pin != csn_pin)
+    #endif
+        pinMode(csn_pin,OUTPUT);
+    
     _SPI.begin();
     ce(LOW);
   	csn(HIGH);
@@ -721,7 +730,7 @@ void RF24::begin(void)
 
 void RF24::startListening(void)
 {
- #if !defined (RF24_TINY)
+ #if !defined (RF24_TINY) && ! defined(LITTLEWIRE)
   powerUp();
  #endif
   write_register(CONFIG, read_register(CONFIG) | _BV(PRIM_RX));
@@ -763,7 +772,7 @@ void RF24::stopListening(void)
   //flush_rx();
   write_register(CONFIG, ( read_register(CONFIG) ) & ~_BV(PRIM_RX) );
  
-  #if defined (RF24_TINY)
+  #if defined (RF24_TINY) || defined (LITTLEWIRE)
   // for 3 pins solution TX mode is only left with additonal powerDown/powerUp cycle
   if (ce_pin == csn_pin) {
     powerDown();
@@ -949,11 +958,13 @@ bool RF24::writeFast( const void* buf, uint8_t len ){
 //Otherwise we enter Standby-II mode, which is still faster than standby mode
 //Also, we remove the need to keep writing the config register over and over and delaying for 150 us each time if sending a stream of data
 
-void RF24::startFastWrite( const void* buf, uint8_t len, const bool multicast){ //TMRh20
+void RF24::startFastWrite( const void* buf, uint8_t len, const bool multicast, bool startTx){ //TMRh20
 
 	//write_payload( buf,len);
 	write_payload( buf, len,multicast ? W_TX_PAYLOAD_NO_ACK : W_TX_PAYLOAD ) ;
-	ce(HIGH);
+	if(startTx){
+		ce(HIGH);
+	}
 
 }
 
@@ -984,6 +995,7 @@ bool RF24::rxFifoFull(){
 /****************************************************************************/
 
 bool RF24::txStandBy(){
+
     #if defined (FAILURE_HANDLING) || defined (RF24_LINUX)
 		uint32_t timeout = millis();
 	#endif
@@ -1010,8 +1022,12 @@ bool RF24::txStandBy(){
 
 /****************************************************************************/
 
-bool RF24::txStandBy(uint32_t timeout){
+bool RF24::txStandBy(uint32_t timeout, bool startTx){
 
+    if(startTx){
+	  stopListening();
+	  ce(HIGH);
+	}
 	uint32_t start = millis();
 
 	while( ! (read_register(FIFO_STATUS) & _BV(TX_EMPTY)) ){
@@ -1038,6 +1054,7 @@ bool RF24::txStandBy(uint32_t timeout){
 	return 1;
 
 }
+
 /****************************************************************************/
 
 void RF24::maskIRQ(bool tx, bool fail, bool rx){
